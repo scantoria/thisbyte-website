@@ -2,7 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper functions for CMMI/audit readiness
+    // ========================================
+    // HELPER FUNCTIONS FOR CMMI/AUDIT READINESS
+    // ========================================
+    
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -15,7 +18,31 @@ service cloud.firestore {
       return request.auth.token.role in ['admin', 'auditor'];
     }
     
-    // Public read access for service pages
+    // ========================================
+    // ✅ CORRECTED: ENUM VALIDATION FUNCTIONS
+    // Per Data Dictionary v1.1 (Corrected)
+    // ========================================
+    
+    function isValidLeadStatus(status) {
+      return status in ['new', 'contacted', 'qualified', 'proposal', 'closed'];
+    }
+    
+    function isValidPriority(priority) {
+      return priority in ['low', 'medium', 'high', 'critical'];
+    }
+    
+    function isValidAuditAction(action) {
+      return action in ['create', 'read', 'update', 'delete', 'login', 'logout'];
+    }
+    
+    function isValidUserRole(role) {
+      return role in ['viewer', 'auditor', 'admin'];
+    }
+    
+    // ========================================
+    // SERVICE PAGES
+    // ========================================
+    
     match /servicePages/{pageId} {
       allow read: if true; // Publicly readable
       allow create, update, delete: if isAdmin();
@@ -28,53 +55,134 @@ service cloud.firestore {
       && request.resource.data.title.size() < 100;
     }
     
-    // Lead captures with GDPR/CMMI compliance
+    // ========================================
+    // ✅ CORRECTED: LEADS COLLECTION
+    // With complete Data Dictionary validation
+    // ========================================
+    
     match /leads/{leadId} {
-      allow create: if true; // Public submission
-      allow read: if isAuditor();
-      allow update, delete: if isAdmin();
-      
-      // Data validation for lead capture
+      // Public can create leads (website contact form)
       allow create: if request.resource.data.keys().hasAll([
-        'email', 'serviceInterest', 'timestamp'
-      ]) && request.resource.data.email is string
+        'name', 'email', 'message', 'consentGiven', 'consentTimestamp',
+        'status', 'priority', 'createdAt', 'updatedAt'
+      ]) 
+      // Name validation
+      && request.resource.data.name is string
+      && request.resource.data.name.size() >= 2
+      && request.resource.data.name.size() <= 100
+      // Email validation
+      && request.resource.data.email is string
       && request.resource.data.email.matches('^[^@]+@[^@]+\\.[^@]+$')
-      && request.resource.data.timestamp == request.time;
+      && request.resource.data.email.size() <= 320
+      // Message validation
+      && request.resource.data.message is string
+      && request.resource.data.message.size() >= 10
+      && request.resource.data.message.size() <= 5000
+      // GDPR consent validation
+      && request.resource.data.consentGiven == true
+      && request.resource.data.consentTimestamp is timestamp
+      // Status must be 'new' on creation and valid
+      && request.resource.data.status == 'new'
+      && isValidLeadStatus(request.resource.data.status)
+      // Priority must be valid enum
+      && isValidPriority(request.resource.data.priority)
+      // Timestamps must be server time
+      && request.resource.data.createdAt == request.time
+      && request.resource.data.updatedAt == request.time;
       
-      // Prevent PII updates except by admins
-      allow update: if isAdmin() 
-      || (request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['status', 'notes', 'followUpDate']));
+      // Admin and Auditor can read leads
+      allow read: if isAuditor();
+      
+      // Only Admin can update leads
+      allow update: if isAdmin()
+        // Validate status if changed
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+            || isValidLeadStatus(request.resource.data.status))
+        // Validate priority if changed
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['priority'])
+            || isValidPriority(request.resource.data.priority))
+        // updatedAt must be updated
+        && request.resource.data.updatedAt == request.time;
+      
+      // Soft delete only (no hard delete)
+      allow delete: if false;
     }
     
-    // Audit trail collection (write-only from Cloud Functions)
+    // ========================================
+    // ✅ CORRECTED: AUDIT LOGS COLLECTION
+    // With complete schema and action validation
+    // ========================================
+    
     match /auditLogs/{logId} {
+      // Admin and Auditor can read audit logs
       allow read: if isAuditor();
-      allow create: if request.auth.uid == 'cloud-function-service-account';
+      
+      // Only cloud functions can create audit logs
+      allow create: if request.auth.uid == 'cloud-function-service-account'
+        // Required fields validation
+        && request.resource.data.keys().hasAll([
+          'action', 'resource', 'resourceType', 'resourceId',
+          'userId', 'timestamp', 'status'
+        ])
+        // Action must be valid CRUD verb
+        && isValidAuditAction(request.resource.data.action)
+        // Resource type must be string
+        && request.resource.data.resourceType is string
+        // User ID must be string
+        && request.resource.data.userId is string
+        // Timestamp must be timestamp type
+        && request.resource.data.timestamp is timestamp
+        // Status must be success or failure
+        && request.resource.data.status in ['success', 'failure'];
+      
+      // Audit logs are immutable
       allow update, delete: if false;
     }
     
-    // Configuration management (CMMI compliant)
+    // ========================================
+    // CONFIGURATION MANAGEMENT (CMMI COMPLIANT)
+    // ========================================
+    
     match /systemConfig/{configId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
       
       // Version control enforcement
       allow update: if request.resource.data.version == resource.data.version + 1
-      && request.resource.data.updatedBy == request.auth.uid
-      && request.resource.data.updatedAt == request.time;
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time;
     }
     
-    // User profiles synchronized with Firebase Auth
+    // ========================================
+    // ✅ CORRECTED: USER PROFILES
+    // With role enum validation
+    // ========================================
+    
     match /users/{userId} {
+      // User can read own profile, admins/auditors can read all
       allow read: if isAuthenticated() 
-      && (request.auth.uid == userId || isAuditor());
-      allow write: if request.auth.uid == userId || isAdmin();
+        && (request.auth.uid == userId || isAuditor());
       
-      // Role management restriction
-      allow update: if !('role' in request.resource.data) 
-      || (isAdmin() && 'role' in request.resource.data)
-      || ('role' in request.resource.data && request.resource.data.role == resource.data.role);
+      // User can update own limited fields, admin can update all
+      allow create: if isAdmin()
+        && isValidUserRole(request.resource.data.role)
+        && request.resource.data.keys().hasAll([
+          'email', 'displayName', 'role', 'status', 'createdAt'
+        ]);
+      
+      // Update validation
+      allow update: if (
+        // User updating own non-role fields
+        (request.auth.uid == userId 
+         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
+        // OR admin updating any field with valid role
+        || (isAdmin() 
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+                || isValidUserRole(request.resource.data.role)))
+      );
+      
+      // Soft delete only
+      allow delete: if false;
     }
   }
 }

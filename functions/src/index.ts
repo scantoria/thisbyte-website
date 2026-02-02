@@ -1,14 +1,15 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
+import { UserRole, isValidUserRole, AuditAction } from './types';
 
 admin.initializeApp();
 
 // Helper: Get permissions for role
-function getPermissionsForRole(role: string): string[] {
-  const permissions: Record<string, string[]> = {
-    admin: ['leads:read', 'leads:write', 'leads:delete', 'users:read', 'users:write', 'audit:read', 'config:write'],
-    auditor: ['leads:read', 'audit:read', 'users:read'],
-    viewer: ['leads:read']
+function getPermissionsForRole(role: UserRole): string[] {
+  const permissions: Record<UserRole, string[]> = {
+    [UserRole.ADMIN]: ['leads:read', 'leads:write', 'leads:delete', 'users:read', 'users:write', 'audit:read', 'config:write'],
+    [UserRole.AUDITOR]: ['leads:read', 'audit:read', 'users:read'],
+    [UserRole.VIEWER]: ['leads:read']
   };
   return permissions[role] || [];
 }
@@ -26,22 +27,22 @@ export const setUserRole = functions.https.onCall((data: any, context: any) => {
     throw new functions.https.HttpsError('invalid-argument', 'Missing uid or role');
   }
 
-  // 3. Validate role enum
-  if (!['admin', 'auditor', 'viewer'].includes(role)) {
+  // 3. Validate role enum using type-safe validation
+  if (!isValidUserRole(role)) {
     throw new functions.https.HttpsError('invalid-argument', 'Invalid role');
   }
 
   return admin.auth().verifyIdToken(context.auth.token)
     .then((callerToken: any) => {
       // 4. Verify caller is admin
-      if (callerToken.role !== 'admin') {
+      if (callerToken.role !== UserRole.ADMIN) {
         throw new functions.https.HttpsError('permission-denied', 'Only admins can set roles');
       }
 
       // 5. Get user and set claims
       return Promise.all([
         admin.auth().getUser(uid),
-        admin.auth().getUser(uid).then(user => (user.customClaims as any)?.role || 'viewer')
+        admin.auth().getUser(uid).then(user => (user.customClaims as any)?.role || UserRole.VIEWER)
       ]);
     })
     .then(([userRecord, oldRole]) => {
@@ -58,7 +59,7 @@ export const setUserRole = functions.https.onCall((data: any, context: any) => {
     .then(({ userRecord, oldRole }) => {
       // 7. Log to audit
       return admin.firestore().collection('auditLogs').add({
-        action: 'update',
+        action: AuditAction.UPDATE,
         resource: `users/${uid}`,
         resourceId: uid,
         resourceType: 'user',
@@ -82,7 +83,7 @@ export const setUserRole = functions.https.onCall((data: any, context: any) => {
     .catch((error: any) => {
       // 9. Log error
       return admin.firestore().collection('auditLogs').add({
-        action: 'update',
+        action: AuditAction.UPDATE,
         resource: `users/${uid}`,
         resourceId: uid,
         resourceType: 'user',

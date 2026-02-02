@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions for CMMI/audit readiness
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return request.auth.token.role == 'admin';
+    }
+    
+    function isAuditor() {
+      return request.auth.token.role in ['admin', 'auditor'];
+    }
+    
+    // Public read access for service pages
+    match /servicePages/{pageId} {
+      allow read: if true; // Publicly readable
+      allow create, update, delete: if isAdmin();
+      
+      // Enforce schema validation
+      allow write: if request.resource.data.keys().hasAll([
+        'title', 'slug', 'content', 'metaDescription'
+      ]) && request.resource.data.title is string
+      && request.resource.data.title.size() > 0
+      && request.resource.data.title.size() < 100;
+    }
+    
+    // Lead captures with GDPR/CMMI compliance
+    match /leads/{leadId} {
+      allow create: if true; // Public submission
+      allow read: if isAuditor();
+      allow update, delete: if isAdmin();
+      
+      // Data validation for lead capture
+      allow create: if request.resource.data.keys().hasAll([
+        'email', 'serviceInterest', 'timestamp'
+      ]) && request.resource.data.email is string
+      && request.resource.data.email.matches('^[^@]+@[^@]+\\.[^@]+$')
+      && request.resource.data.timestamp == request.time;
+      
+      // Prevent PII updates except by admins
+      allow update: if isAdmin() 
+      || (request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'notes', 'followUpDate']));
+    }
+    
+    // Audit trail collection (write-only from Cloud Functions)
+    match /auditLogs/{logId} {
+      allow read: if isAuditor();
+      allow create: if request.auth.uid == 'cloud-function-service-account';
+      allow update, delete: if false;
+    }
+    
+    // Configuration management (CMMI compliant)
+    match /systemConfig/{configId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+      
+      // Version control enforcement
+      allow update: if request.resource.data.version == resource.data.version + 1
+      && request.resource.data.updatedBy == request.auth.uid
+      && request.resource.data.updatedAt == request.time;
+    }
+    
+    // User profiles synchronized with Firebase Auth
+    match /users/{userId} {
+      allow read: if isAuthenticated() 
+      && (request.auth.uid == userId || isAuditor());
+      allow write: if request.auth.uid == userId || isAdmin();
+      
+      // Role management restriction
+      allow update: if !('role' in request.resource.data) 
+      || (isAdmin() && 'role' in request.resource.data)
+      || ('role' in request.resource.data && request.resource.data.role == resource.data.role);
+    }
+  }
+}

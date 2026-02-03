@@ -1,26 +1,50 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { IBM_Plex_Sans, JetBrains_Mono } from "next/font/google";
 import { GoogleAnalytics } from '@next/third-parties/google';
+import ServiceWorkerRegistration from "./components/ServiceWorkerRegistration";
 import "./globals.css";
 
-// Font configurations remain unchanged
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Font configurations matching Flutter site
+const ibmPlexSans = IBM_Plex_Sans({
+  variable: "--font-ibm-plex-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
   subsets: ["latin"],
+  weight: ["400", "600"],
 });
 
-// **COMPLIANCE: Metadata must reflect "Full Stack and Beneath" brand**
+// Viewport configuration
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: "#00D4FF",
+};
+
+// Metadata with PWA configuration
 export const metadata: Metadata = {
   title: "ThisByte - Full Stack and Beneath",
   description: "Enterprise solutions engineered for federal compliance, CMMI maturity, and scalable innovation.",
-  keywords: ["CMMI", "federal compliance", "React.js", "Next.js", "enterprise development"],
+  keywords: ["CMMI", "federal compliance", "React.js", "Next.js", "enterprise development", "infrastructure", "IT engineering"],
   authors: [{ name: "ThisByte, LLC" }],
   robots: "index, follow",
+  manifest: "/manifest.json",
+  icons: {
+    icon: "/favicon.png",
+    apple: "/Icon-192.png",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "ThisByte",
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 // **COMPLIANCE: GA_TRACKING_ID must be defined in environment**
@@ -38,8 +62,9 @@ export default function RootLayout({
         {GA_TRACKING_ID && <GoogleAnalytics gaId={GA_TRACKING_ID} />}
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${ibmPlexSans.variable} ${jetbrainsMono.variable} antialiased`}
       >
+        <ServiceWorkerRegistration />
         {children}
       </body>
     </html>

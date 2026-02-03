@@ -1,5 +1,6 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
+import * as nodemailer from 'nodemailer';
 import { UserRole, isValidUserRole, AuditAction } from './types';
 
 admin.initializeApp();
@@ -100,3 +101,58 @@ export const setUserRole = functions.https.onCall((data: any, context: any) => {
 });
 
 // Note: syncUserToFirestore removed - add later
+
+// Contact Form Email Function
+export const sendContactEmail = functions.https.onCall(async (data: any) => {
+  const { name, email, company, message } = data;
+
+  // Validate required fields
+  if (!name || !email || !message) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Name, email, and message are required'
+    );
+  }
+
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Invalid email format'
+    );
+  }
+
+  // Configure nodemailer transport
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+
+  // Email content
+  const mailOptions = {
+    from: `"ThisByte Contact Form" <${process.env.EMAIL_USER}>`,
+    to: 'support@thisbyte.com',
+    subject: `New Contact Form Submission from ${name}`,
+    html: `
+      <h2>New Contact Form Submission</h2>
+      <p><strong>Name:</strong> ${name}</p>
+      <p><strong>Email:</strong> ${email}</p>
+      <p><strong>Company:</strong> ${company || 'Not provided'}</p>
+      <hr>
+      <p><strong>Message:</strong></p>
+      <p>${message.replace(/\n/g, '<br>')}</p>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    return { success: true, message: 'Email sent successfully' };
+  } catch (error: any) {
+    console.error('Error sending email:', error);
+    throw new functions.https.HttpsError('internal', 'Failed to send email');
+  }
+});

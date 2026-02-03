@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -16,4 +17,22 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+export const functions = getFunctions(app);
 export default app;
+
+// Contact form submission
+export async function sendContactForm(data: {
+  name: string;
+  email: string;
+  company?: string;
+  message: string;
+}): Promise<boolean> {
+  try {
+    const sendContactEmail = httpsCallable(functions, 'sendContactEmail');
+    await sendContactEmail(data);
+    return true;
+  } catch (error) {
+    console.error('Error sending contact form:', error);
+    return false;
+  }
+}
